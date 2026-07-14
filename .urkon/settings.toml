@@ -1,0 +1,179 @@
+# .urkon/settings.toml — per-repo Urkon customization.
+# Every value below is commented out and shows its built-in default. Uncomment and
+# edit only what you want to change. Only the two secret tokens live outside this file
+# — URKON_GH_TOKEN and URKON_USER_TOKEN are read from the environment (never a file).
+# A CLI flag or a URKON_* environment variable overrides any scalar knob set here
+# (flag > env > this file > built-in default).
+
+# The Git host repository the loop operates on (env: URKON_REPO, flag: --repo).
+# A full repository URL; its host selects the API endpoint (github.com uses the
+# public API, any other host uses the GitHub Enterprise endpoints).
+[repo]
+url = "https://github.com/dlsniper/test-workflow-bmad"
+
+# Identities and secrets:
+#   Tokens are environment-only (never a file): export URKON_GH_TOKEN (agent PAT,
+#   required by watch) and URKON_USER_TOKEN (user PAT, required by init).
+#   The non-secret identity logins live under [tracker] / [forge] below.
+
+# Docs the prompts tell Urkon to read. Point these at your repo's own files.
+[docs]
+# workflow = "docs/dev-workflow.md"
+# agents = "AGENTS.md"
+
+# Git conventions the prompts follow.
+[git]
+# branch_prefix = "feat/"   # code/tests branches: <prefix><issue#>-<slug>
+# plan_prefix = "plan/"     # docs/design-note branches
+
+# Non-secret watcher knobs (flag / env override these).
+[watch]
+# interval = "2m"                             # poll interval, Go duration (> 0)
+# test_cmd = "make test"
+# test_integration_cmd = "make test-integration"
+# max_concurrency = 1                         # items worked at once (>= 1)
+# page_size = 0                               # 0 = provider per-query defaults
+# claim_settle = "10s"                        # ownership-claim settle window (multi-instance)
+
+# Agent selection (flag / env override these). Each bundled agent has its own
+# [agent.<name>] subtable for its executable and knobs.
+[agent]
+cli_name = "opencode"                     # fallback agent when an item has no agent:<name> label
+
+[agent.claude]
+# bin = "claude"
+# permission_mode = "bypassPermissions"   # passed to the claude adapter
+
+[agent.amp]
+# bin = "amp"
+# dangerously_allow_all = true            # Amp headless autonomy pin (amp.dangerouslyAllowAll)
+
+[agent.opencode]
+# bin = "opencode"
+#model = "anthropic/claude-opus-4-8"     # optional; empty => OpenCode's own config decides
+model = "kronk/mtp-Qwen3.6-35B-A3B-UD-Q8_K_XL/AGENT"
+# auto = true                             # pass OpenCode's --auto flag
+
+# Issue tracker: the backend, the GitHub Projects board it hosts, and that board's
+# Status column names. The column names must match your board's option names exactly
+# — "urkon init" seeds a NEW board with these names, and the watcher moves items to
+# them. Best set BEFORE your first "urkon init". To rename a column on a board that
+# already has items, rename it in the GitHub Projects UI (that preserves item
+# assignments) and mirror the new name here — do NOT re-run "urkon init" to rename,
+# as reseeding replaces the options and drops in-flight item Status.
+[tracker]
+# name = "github"                             # backend: github | jira (env: URKON_TRACKER)
+# user = "octocat"                            # tracker-side user: board/label authority (env: URKON_TRACKER_USER)
+# agent = "octocat-bot"                       # tracker-side machine account (env: URKON_TRACKER_AGENT)
+# Core-mode board Status column names:
+# backlog = "Backlog"
+# spec = "Spec"
+# tests = "Tests"
+# tests_review = "Tests review"
+# code = "Code"
+# code_review = "Code review"
+# done = "Done"
+
+# GitHub-tracker board title + number (ignored under a JIRA tracker).
+[tracker.github]
+project_name = "Test Workflow BMAD"  # board title; "urkon init" prompts when unset and writes your answer here (env: URKON_TRACKER_GITHUB_PROJECT_NAME).
+project_number = 6                   # "urkon init" writes the resolved board number here; 0/unset = unset (env: URKON_TRACKER_GITHUB_PROJECT_NUMBER).
+
+# JIRA-tracker config (only under name = "jira"). "urkon init" writes this block
+# — the [tracker.jira] header, its scalars, and the stage→status maps below — from
+# your interactive answers. Env overrides: URKON_TRACKER_JIRA_SITE / _PROJECT / _BOARD.
+# [tracker.jira]
+# site = "your-org.atlassian.net"
+# project = "KAN"
+# board = "42"
+# [tracker.jira.status_map]        # every core stage → a backing JIRA status name
+# backlog = "Backlog"
+# ...
+# [tracker.jira.bmad_status_map]   # every bmad stage → a JIRA status (bmad mode only)
+
+# BMAD-mode board Status column names (10-stage bmad flow), only used in bmad mode.
+# Same rules as the core column names above.
+[tracker.bmad_board]
+# backlog = "Backlog"
+# brief = "Brief"
+# prd = "PRD"
+# architecture = "Architecture"
+# epics = "Epics"
+# story = "Story"
+# dev = "Dev"
+# qa = "QA"
+# review = "Review"
+# done = "Done"
+
+# Git-forge / PR backend (flag / env override these).
+[forge]
+# name = "github"                               # backend: github (env: URKON_FORGE)
+# user = "octocat"                              # forge-side user: Label Guard authority (env: URKON_FORGE_USER)
+                                              # defaults from [tracker].user under a GitHub tracker
+# agent = "octocat-bot"                         # forge-side machine account (env: URKON_FORGE_AGENT)
+                                              # defaults from [tracker].agent under a GitHub tracker
+# agent_commits = false                         # agent commits/pushes/opens PRs as the agent
+
+# Auto-resume bounds (flag / env override these). When a headless run ends in a
+# transient failure (usage/rate limit, network timeout, max-turns/budget) the
+# watcher waits and resumes the SAME session in-process, bounded so it can never
+# wait or retry unboundedly. Durations are Go duration strings (e.g. 30s, 6h).
+[resume]
+# buffer = "1m"                               # added to every computed wait for slack
+# backoff_base = "30s"                        # exponential backoff base (no reset time known)
+# backoff_max = "30m"                         # per-attempt backoff cap
+# max_wait = "6h"                             # cumulative-wait ceiling per episode (primary bound)
+# max_attempts = 50                           # runaway backstop (attempts per episode)
+
+# Run isolation (settings.toml-only, no env override). Each headless dispatch runs in
+# its own per-(feature, agent) git worktree under .worktrees/; the backend decides how
+# the agent command is executed. "none" (the default) is host passthrough — it runs on
+# the host exactly as before, only pinning the run's cwd to that worktree. "docker" runs
+# the agent in a container built on demand from .urkon/sandbox/docker/Dockerfile (one
+# --target stage per agent; tagged by the Dockerfile's content hash so edits rebuild):
+# the worktree is mounted at /workspace, .env.sandbox is fed via --env-file (the ONLY
+# env passed — the host environment is not forwarded), and paths_ro/paths_rw bind at
+# their absolute host path. Set image to skip the build and run a prebuilt image. The
+# remaining backends (podman/rancher/openshell) are still skeletons: selecting one emits
+# a one-time warning and falls back to host passthrough, unless require_backend = true,
+# which fails "urkon watch" closed at startup.
+[sandbox]
+# backend = "none"                   # none | docker | podman | rancher | openshell
+# image = ""                         # prebuilt image ref; set to skip docker's build (unused by none/openshell)
+# require_backend = false            # true = fail closed if the backend is unimplemented/unavailable
+# paths_ro = ["~/.gnupg", "~/.gitconfig"]   # read-only host mounts (default shown; [] = none)
+# paths_rw = []                      # read-write host mounts
+
+# [sandbox.env] is rendered into each sandbox's .env.sandbox (git-ignored, generated
+# per worktree). ${HOST_VAR} references resolve from the host environment when the file
+# is generated, so secrets (e.g. GH_TOKEN) are never committed. Inspect the resolved
+# result with "urkon sandbox secrets --feature N --agent claude" ("--mask" to redact).
+[sandbox.env]
+# GH_TOKEN = "${URKON_GH_TOKEN}"
+
+# Whole-prompt overrides live in their own files, NOT here: .urkon/prompts/core.toml
+# and — in bmad mode — .urkon/prompts/bmad.toml. "urkon init" deploys them pre-filled
+# with the built-in defaults (each value a Go text/template that may reference
+# {{.FeatureID}}, {{.Ref}}, {{.WorkflowDoc}}, {{.AgentsDoc}}, {{.BranchPrefix}},
+# {{.PlanPrefix}}, {{.Board.Name "done"}} and, on the cold implementation variants,
+# {{.Spec}}). Edit a value there to change that prompt; the shared terse suffix is the
+# "terse" key and is appended automatically. Run "urkon prompts dump" to reset those
+# files to the current built-in defaults.
+
+# BMAD mode (settings.toml-only, no env override). When [bmad].enabled is unset the
+# watch/init command auto-detects bmad from the repo; set it true/false to force.
+[bmad]
+enabled = true  # unset = auto-detect; true = force on; false = off
+# story_advance = "suggest"                   # story dev->qa->review advancement: suggest | agent | user
+# issue_types = false                         # use GitHub org issue types for bmad kinds
+
+# Per-sub-phase overrides of story_advance (each: suggest | agent | user).
+[bmad.story_advance_gates]
+# dev = "suggest"
+# qa = "suggest"
+# review = "suggest"
+
+# Map bmad kinds to your org's issue-type (or label) names. Only used when issue_types.
+[bmad.issue_type_map]
+# epic = "Epic"
+# story = "Story"
