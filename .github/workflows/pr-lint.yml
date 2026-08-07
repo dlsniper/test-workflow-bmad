@@ -1,0 +1,46 @@
+# urkon:managed — installed by `urkon init`; edits are overwritten on the next run.
+# Remove this marker line to take ownership of the file and urkon will leave it alone.
+name: PR Lint
+
+# Enforces PR conventions:
+#   Title:  "ISSUE-ID: Short description"     e.g. "123: ..." or "KAN-42: ..."
+#   Body:   <terse description>\n\nCloses #123   (numeric GitHub issue)
+#                              or Closes KAN-42  (JIRA key — a human breadcrumb;
+#                              GitHub does not auto-close a JIRA issue, so urkon
+#                              drives the JIRA close on merge)
+# The title id and the body id must match; '#' is REQUIRED for a numeric id and
+# FORBIDDEN for a JIRA key.
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: PR Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate title and body
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # Title id is a numeric GitHub issue id OR a JIRA key (PROJECT-NUMBER).
+          if ! printf '%s' "$TITLE" | grep -Eq '^([A-Z][A-Z0-9]+-[0-9]+|[0-9]+): .+'; then
+            echo "::error::PR title must be 'ISSUE-ID: Short description', e.g. '123: Solves config parsing' or 'KAN-42: Solves config parsing'"
+            exit 1
+          fi
+          ID=$(printf '%s' "$TITLE" | sed -E 's/^([^:]+):.*/\1/')
+          # '#' is required for a numeric issue and forbidden for a JIRA key.
+          if printf '%s' "$ID" | grep -Eq '^[0-9]+$'; then
+            HASH='#'
+          else
+            HASH=''
+          fi
+          if ! printf '%s' "$BODY" | grep -Eq "Closes ${HASH}${ID}([^0-9]|$)"; then
+            echo "::error::PR body must contain 'Closes ${HASH}${ID}' (numeric issues use '#'; JIRA keys do not). A numeric 'Closes #N' auto-closes the issue on merge; a JIRA 'Closes KAN-N' is a human breadcrumb."
+            exit 1
+          fi
+          echo "PR title and body OK (Closes ${HASH}${ID})"
