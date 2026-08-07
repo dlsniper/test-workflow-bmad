@@ -1,0 +1,99 @@
+# urkon:managed — installed by `urkon init`; edits are overwritten on the next run.
+# Remove this marker line to take ownership of the file and urkon will leave it alone.
+name: Label Guard
+
+# Machine-enforces who may set which labels now that the bot and the owner are
+# distinct identities. Any disallowed change is automatically reverted.
+#
+# Identities come from repo Actions variables (set by `urkon init`):
+#   vars.URKON_FORGE_USER   — the human owner on the forge
+#   vars.URKON_FORGE_AGENT  — the agent's machine account
+# Label Guard is forge-side (GitHub) only; a JIRA tracker has no GitHub-Actions
+# equivalent, so JIRA issue-side label authority is convention-enforced.
+#
+# Matrix (three label families; see .urkon/workflow.md):
+#   OWNER                            -> anything (incl. the agent:<name> selectors)
+#   github-actions[bot] (this wf)    -> anything (its own reverts; avoids loops)
+#   BOT (the agent)                  -> agent:in-progress and human:review freely;
+#       may REMOVE the trigger (agent:review) as part of consume-at-pickup, but
+#       may NOT add it; may ADD a phase:* label (the at-creation stamp) but may
+#       NOT remove one (phase advancement is the owner's); may NOT add an
+#       agent:<name> SELECTOR label — those are owner-only routing (the reserved
+#       agent:review/agent:debug/agent:in-progress state labels are unaffected).
+#   anyone else                      -> nothing (all changes reverted)
+on:
+  issues:
+    types: [labeled, unlabeled]
+  pull_request_target:
+    types: [labeled, unlabeled]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce label authority
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          ACTOR: ${{ github.actor }}
+          OWNER: ${{ vars.URKON_FORGE_USER }}
+          BOT: ${{ vars.URKON_FORGE_AGENT }}
+        run: |
+          is_in() { case " $1 " in *" $2 "*) return 0 ;; *) return 1 ;; esac; }
+
+          # The identities are repo Actions variables written by `urkon init`. There is
+          # deliberately no fallback: guessing an owner would either lock the real owner
+          # out or let an unknown actor pass as one, so an unconfigured repo fails loudly.
+          if [ -z "$OWNER" ] || [ -z "$BOT" ]; then
+            echo "::error::URKON_FORGE_USER and URKON_FORGE_AGENT must be set as repo Actions variables (run 'urkon init')"
+            exit 1
+          fi
+
+          # Owner and this workflow's own reverts may do anything.
+          if [ "$ACTOR" = "$OWNER" ] || [ "$ACTOR" = "github-actions[bot]" ]; then
+            echo "Allowed: $ACTOR"; exit 0
+          fi
+
+          PHASE="phase:spec phase:tests phase:code"            # owner transitions; bot may ADD (creation stamp), not remove
+          GATE_TRIGGER="agent:review"                          # owner adds; bot may remove (consume-at-pickup)
+          AGENT_RESERVED="agent:review agent:debug agent:in-progress agent:errored agent:retrying"   # bot/owner STATE in the agent: family; every OTHER agent:* is an owner-only selector
+
+          # is_agent_selector: true when LABEL is in the agent: namespace but is NOT
+          # one of the reserved state labels — i.e. an owner-only agent:<name> selector.
+          is_agent_selector() {
+            case "$1" in agent:*) ;; *) return 1 ;; esac
+            is_in "$AGENT_RESERVED" "$1" && return 1
+            return 0
+          }
+
+          violation=true   # default-deny for unknown actors
+          if [ "$ACTOR" = "$BOT" ]; then
+            violation=false
+            if is_in "$PHASE" "$LABEL" && [ "$ACTION" = "unlabeled" ]; then
+              violation=true                                   # bot may not REMOVE a phase (no advancement)
+            elif is_in "$GATE_TRIGGER" "$LABEL" && [ "$ACTION" = "labeled" ]; then
+              violation=true                                   # bot may not ADD the trigger (remove ok)
+            elif is_agent_selector "$LABEL" && [ "$ACTION" = "labeled" ]; then
+              violation=true                                   # bot may not ADD an agent:<name> selector (owner-only routing)
+            fi
+          fi
+
+          if [ "$violation" != "true" ]; then
+            echo "Allowed: $ACTOR $ACTION '$LABEL' on #$NUMBER"; exit 0
+          fi
+
+          echo "Reverting '$ACTION' of '$LABEL' by '$ACTOR' on #$NUMBER"
+          if [ "$ACTION" = "labeled" ]; then
+            gh issue edit "$NUMBER" --repo "$REPO" --remove-label "$LABEL" \
+              || gh pr edit "$NUMBER" --repo "$REPO" --remove-label "$LABEL"
+          else
+            gh issue edit "$NUMBER" --repo "$REPO" --add-label "$LABEL" \
+              || gh pr edit "$NUMBER" --repo "$REPO" --add-label "$LABEL"
+          fi
